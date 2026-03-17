@@ -1,0 +1,30 @@
+services:
+  immich-server:
+  ...
+  immich-machine-learning:
+  ...
+  # Keep models in VRAM (0 = never unload; default 300s unloads after 5 min idle)
+      MACHINE_LEARNING_MODEL_TTL: "0"
+  ...
+  redis:
+  ...
+  database:
+  ...
+  face-api:
+      container_name: immich_face_api
+      build:
+        context: ./face-api
+        dockerfile: Dockerfile
+      env_file:
+        - stack.env
+      environment:
+        ML_URL: http://immich-machine-learning:3003
+        UVCORN_RELOAD: "1"
+      volumes:
+        - /stacks/immich/face-api:/app
+      ports:
+        - '8080:8080'
+      depends_on:
+        - database
+        - immich-machine-learning
+      restart: always
