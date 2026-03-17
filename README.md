@@ -1,4 +1,6 @@
-# Face API
+# Immich Face API
+
+![](./tsssss.png)
 
 Immich Face API consists of a small HTTP service, added to the Immich stack, that accepts an image upload via POST and returns detected face names from the Immich library.
 
