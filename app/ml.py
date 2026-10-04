@@ -54,7 +54,12 @@ def detect_faces(image_bytes: bytes, content_type: str) -> list[dict[str, Any]]:
             data={"entries": json.dumps(entries)},
             files={"image": ("image", image_bytes, content_type or "image/jpeg")},
         )
-        response.raise_for_status()
+        if response.is_error:
+            # ML puts the reason in the body (e.g. {"detail": "Failed to load model 'buffalo_l'"});
+            # raise_for_status() would discard it and leave only the status line.
+            body = response.text[:1000]
+            logger.error("ML predict %s -> %s: %s", url, response.status_code, body)
+            raise RuntimeError(f"ML predict returned {response.status_code}: {body}")
     data = response.json()
     faces = data.get("facial-recognition")
     if not isinstance(faces, list):

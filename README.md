@@ -84,3 +84,20 @@ actions:
   docker compose build --no-cache face-api
   docker compose up -d face-api
   ```
+
+## Faster Face Recognition
+Immich unloads the model if it is not needed and warming it up takes ~3-10s.
+You can keep the face detection and face recognition models in memory via this environment vars for immich:
+
+```yaml
+immich-machine-learning
+  ...
+  environment:
+      # No per-model TTL exists: after this many idle seconds ML restarts its worker, freeing
+      # all VRAM (CLIP/OCR). Face models below are preloaded on every start, so they come
+      # straight back while CLIP/OCR only load on demand. "0" pinned everything -> CUDA OOM when the server has many models loaded in VRAM.
+      MACHINE_LEARNING_MODEL_TTL: "300"
+      # Must match the admin UI face model and face-api FACE_MODEL, or a second pair gets loaded
+      MACHINE_LEARNING_PRELOAD__FACIAL_RECOGNITION__DETECTION: buffalo_l
+      MACHINE_LEARNING_PRELOAD__FACIAL_RECOGNITION__RECOGNITION: buffalo_l
+```

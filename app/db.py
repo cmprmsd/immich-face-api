@@ -16,7 +16,22 @@ logger = logging.getLogger(__name__)
 # See: asset-face.table.ts, face-search.table.ts, person.table.ts
 _schema: dict[str, Any] | None = None
 
-# Try Immich v2 schema first: face_search (embedding) -> asset_face (personId) -> person (name).
+# Immich v3: asset_face has no personId; faces point at person_group via personGroupId, and person
+# is keyed by (ownerId, personGroupId) with one row per user. Join on the asset owner so the
+# name comes from the library that owns the matched face.
+FIND_PERSON_IMMICH_V3_SQL = """
+SELECT p.name, (fs.embedding <=> %s::vector) AS dist
+FROM face_search fs
+JOIN asset_face af ON af.id = fs."faceId"
+JOIN asset a ON a.id = af."assetId"
+JOIN person p ON p."personGroupId" = af."personGroupId" AND p."ownerId" = a."ownerId"
+WHERE af."deletedAt" IS NULL AND af."isVisible" IS TRUE
+  AND p."isHidden" IS NOT TRUE
+ORDER BY fs.embedding <=> %s::vector
+LIMIT 1
+"""
+
+# Immich v2 schema: face_search (embedding) -> asset_face (personId) -> person (name).
 # Column names are camelCase in the repo (faceId, personId, isHidden).
 FIND_PERSON_IMMICH_V2_SQL = """
 SELECT p.name, (fs.embedding <=> %s::vector) AS dist
@@ -127,24 +142,27 @@ LIMIT 1
 def find_person_name_for_embedding(embedding: list[float], max_distance: float) -> tuple[str | None, str]:
     """
     Return (name, reason) for the closest person, or (None, reason) if no match.
-    Tries Immich v2 schema (face_search -> asset_face -> person) then discovery fallback.
+    Tries Immich v3 schema (via personGroupId), then v2 (personId), then discovery fallback.
     """
     vec = embedding_to_vector_literal(embedding)
     row = None
     with get_connection() as conn:
         with conn.cursor() as cur:
-            try:
-                cur.execute(FIND_PERSON_IMMICH_V2_SQL, (vec, vec))
-                row = cur.fetchone()
-            except psycopg.Error:
-                conn.rollback()
+            for label, sql in (("v3", FIND_PERSON_IMMICH_V3_SQL), ("v2", FIND_PERSON_IMMICH_V2_SQL)):
                 try:
-                    sql = _find_person_sql_fallback()
                     cur.execute(sql, (vec, vec))
                     row = cur.fetchone()
+                    break
                 except psycopg.Error as e:
+                    conn.rollback()
+                    logger.info("db: Immich %s schema query failed: %s", label, e)
+            else:
+                try:
+                    cur.execute(_find_person_sql_fallback(), (vec, vec))
+                    row = cur.fetchone()
+                except (psycopg.Error, RuntimeError) as e:
                     raise RuntimeError(
-                        "Face lookup failed (tried Immich v2 schema and discovery). "
+                        "Face lookup failed (tried Immich v3/v2 schema and discovery). "
                         "Check that face_search, asset_face, and person tables exist."
                     ) from e
     if not row or row["dist"] is None:
